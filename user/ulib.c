@@ -145,3 +145,84 @@ memcpy(void *dst, const void *src, uint n)
 {
   return memmove(dst, src, n);
 }
+// Atomic add for RISC-V
+uint
+fetchadd(uint* addr, uint val)
+{
+  uint temp;
+  __asm__ volatile(
+    "amoadd.w %[temp], %[val], (%[addr])"
+    : [temp] "=r" (temp)
+    : [val] "r" (val), [addr] "r" (addr)
+    : "memory"
+  );
+  return temp;
+}
+
+// Initialize lock
+void
+lock_init(lock_t *lock)
+{
+  lock->ticket = 0;
+  lock->turn = 0;
+}
+
+// Acquire lock
+void
+lock_acquire(lock_t *lock)
+{
+  uint myturn = fetchadd(&lock->ticket, 1);
+  
+  while(lock->turn != myturn)
+    ; // Spin
+}
+
+// Release lock
+void
+lock_release(lock_t *lock)
+{
+  fetchadd(&lock->turn, 1);
+}
+
+// Create a new thread
+int
+thread_create(void (*start_routine)(void *, void *), void *arg1, void *arg2)
+{
+  // Allocate stack (2 pages to ensure alignment)
+  void *stack = malloc(2*PGSIZE);
+  if(!stack)
+    return -1;
+  
+  // Align stack to page boundary
+  void *stack_aligned = (void*)(((uint64)stack + PGSIZE - 1) & ~(PGSIZE - 1));
+  
+  // Create thread
+  int tid = clone(start_routine, arg1, arg2, stack_aligned);
+  if(tid < 0) {
+    free(stack);
+    return -1;
+  }
+  
+  // Return appropriate value
+  if(tid == 0) // Child
+    return 0;
+  
+  return tid; // Parent
+}
+
+// Join with a thread
+int
+thread_join(int tid)
+{
+  void *stack;
+  
+  int pid = join(&stack);
+  if(pid < 0)
+    return -1;
+  
+  // Free the thread's stack
+  if(stack)
+    free(stack);
+  
+  return pid;
+}
