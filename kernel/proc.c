@@ -142,12 +142,12 @@ growproc(int n)
   
   acquire(&growlock);
   sz = myproc()->sz;
-  if(n > 0) {
+  if(n > 0){
     if((sz = allocuvm(myproc()->pgdir, sz, sz + n)) == 0) {
       release(&growlock);
       return -1;
     }
-  } else if(n < 0) {
+  } else if(n < 0){
     if((sz = deallocuvm(myproc()->pgdir, sz, sz + n)) == 0) {
       release(&growlock);
       return -1;
@@ -218,40 +218,50 @@ clone(void(*fcn)(void *, void *), void *arg1, void *arg2, void *stack)
   if((np = allocproc()) == 0)
     return -1;
   
+  //share address space with parent
   np->pgdir = curproc->pgdir;
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
   
+  
   np->tf->eax = 0;
   
+ 
   uint sp = (uint)stack + PGSIZE;
   
-  sp -= 4;
-  *(uint*)sp = 0xffffffff;
   
   sp -= 4;
-  *(uint*)sp = (uint)arg2;
+  *(uint*)sp = 0xffffffff; 
   
   sp -= 4;
-  *(uint*)sp = (uint)arg1;
+  *(uint*)sp = (uint)arg2;  
+  
+  sp -= 4;
+  *(uint*)sp = (uint)arg1;  
+  
   
   np->tf->esp = sp;
   
+  
   np->tf->eip = (uint)fcn;
   
+  
   np->ustack = stack;
+  
   
   for(int i = 0; i < NOFILE; i++)
     if(curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
   np->cwd = idup(curproc->cwd);
   
+  
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
   
   acquire(&ptable.lock);
   np->state = RUNNABLE;
   release(&ptable.lock);
+  
   
   pid = np->pid;
   return pid;
@@ -291,12 +301,14 @@ exit(void)
     }
   }
 
+  
   int last = 1;
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p != curproc && p->pgdir == curproc->pgdir && p->state != ZOMBIE)
       last = 0;
 
   curproc->state = ZOMBIE;
+  
   
   curproc->ustack = (void*)(curproc->tf->esp - 8);
   
@@ -315,7 +327,7 @@ wait(void)
   for(;;){
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc || p->pgdir == curproc->pgdir)
+      if(p->parent != curproc || p->pgdir == curproc->pgdir)  
         continue;
       
       havekids = 1;
@@ -360,7 +372,8 @@ join(void **stack)
       havekids = 1;
       if(p->state == ZOMBIE){
         pid = p->pid;
-        *stack = p->ustack;
+        *stack = p->ustack;  
+        
         
         kfree(p->kstack);
         p->kstack = 0;
@@ -384,6 +397,7 @@ join(void **stack)
   }
 }
 
+
 void
 scheduler(void)
 {
@@ -392,13 +406,18 @@ scheduler(void)
   c->proc = 0;
   
   for(;;){
+    
     sti();
 
+    
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
 
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
@@ -406,11 +425,14 @@ scheduler(void)
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
+      
       c->proc = 0;
     }
     release(&ptable.lock);
+
   }
 }
+
 
 void
 sched(void)
@@ -431,6 +453,7 @@ sched(void)
   mycpu()->intena = intena;
 }
 
+
 void
 yield(void)
 {
@@ -440,18 +463,24 @@ yield(void)
   release(&ptable.lock);
 }
 
+
 void
 forkret(void)
 {
   static int first = 1;
+  
   release(&ptable.lock);
 
   if (first) {
+    
     first = 0;
     iinit(ROOTDEV);
     initlog(ROOTDEV);
   }
+
+  
 }
+
 
 void
 sleep(void *chan, struct spinlock *lk)
@@ -464,23 +493,35 @@ sleep(void *chan, struct spinlock *lk)
   if(lk == 0)
     panic("sleep without lk");
 
+  // Must acquire ptable.lock in order to
+  // change p->state and then call sched.
+  // Once we hold ptable.lock, we can be
+  // guaranteed that we won't miss any wakeup
+  // (wakeup runs with ptable.lock locked),
+  // so it's okay to release lk.
   if(lk != &ptable.lock){
     acquire(&ptable.lock);
     release(lk);
   }
+  // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
 
   sched();
 
+  // Tidy up.
   p->chan = 0;
 
+  // Reacquire original lock.
   if(lk != &ptable.lock){
     release(&ptable.lock);
     acquire(lk);
   }
 }
 
+// PAGEBREAK!
+// Wake up all processes sleeping on chan.
+// The ptable lock must be held.
 static void
 wakeup1(void *chan)
 {
@@ -491,6 +532,7 @@ wakeup1(void *chan)
       p->state = RUNNABLE;
 }
 
+// Wake up all processes sleeping on chan.
 void
 wakeup(void *chan)
 {
@@ -499,6 +541,9 @@ wakeup(void *chan)
   release(&ptable.lock);
 }
 
+// Kill the process with the given pid.
+// Process won't exit until it returns
+// to user space (see trap in trap.c).
 int
 kill(int pid)
 {
@@ -508,6 +553,7 @@ kill(int pid)
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
       p->killed = 1;
+      // Wake process from sleep if necessary.
       if(p->state == SLEEPING)
         p->state = RUNNABLE;
       release(&ptable.lock);
@@ -518,6 +564,10 @@ kill(int pid)
   return -1;
 }
 
+// PAGEBREAK: 36
+// Print a process listing to console.  For debugging.
+// Runs when user types ^P on console.
+// No lock to avoid wedging a stuck machine further.
 void
 procdump(void)
 {
@@ -549,4 +599,123 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+// Load a program and replace current process.
+int
+exec(char *path, char **argv)
+{
+  char *s, *last;
+  int i, off;
+  uint argc, sz, sp, ustack[3+MAXARG+1];
+  struct elfhdr elf;
+  struct inode *ip;
+  struct proghdr ph;
+  pde_t *pgdir, *oldpgdir;
+  struct proc *curproc = myproc();
+  struct proc *p;
+
+  begin_op();
+
+  if((ip = namei(path)) == 0){
+    end_op();
+    cprintf("exec: fail\n");
+    return -1;
+  }
+  ilock(ip);
+  pgdir = 0;
+
+  // Check ELF header
+  if(readi(ip, (char*)&elf, 0, sizeof(elf)) != sizeof(elf))
+    goto bad;
+  if(elf.magic != ELF_MAGIC)
+    goto bad;
+
+  if((pgdir = setupkvm()) == 0)
+    goto bad;
+
+  // Load program into memory.
+  sz = 0;
+  for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
+    if(readi(ip, (char*)&ph, off, sizeof(ph)) != sizeof(ph))
+      goto bad;
+    if(ph.type != ELF_PROG_LOAD)
+      continue;
+    if(ph.memsz < ph.filesz)
+      goto bad;
+    if(ph.vaddr + ph.memsz < ph.vaddr)
+      goto bad;
+    if((sz = allocuvm(pgdir, sz, ph.vaddr + ph.memsz)) == 0)
+      goto bad;
+    if(ph.vaddr % PGSIZE != 0)
+      goto bad;
+    if(loaduvm(pgdir, (char*)ph.vaddr, ip, ph.off, ph.filesz) < 0)
+      goto bad;
+  }
+  iunlockput(ip);
+  end_op();
+  ip = 0;
+
+  // Allocate two pages at the next page boundary.
+  // Make the first inaccessible.  Use the second as the user stack.
+  sz = PGROUNDUP(sz);
+  if((sz = allocuvm(pgdir, sz, sz + 2*PGSIZE)) == 0)
+    goto bad;
+  clearpteu(pgdir, (char*)(sz - 2*PGSIZE));
+  sp = sz;
+
+  // Push argument strings, prepare rest of stack in ustack.
+  for(argc = 0; argv[argc]; argc++) {
+    if(argc >= MAXARG)
+      goto bad;
+    sp = (sp - (strlen(argv[argc]) + 1)) & ~3;
+    if(copyout(pgdir, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
+      goto bad;
+    ustack[3+argc] = sp;
+  }
+  ustack[3+argc] = 0;
+
+  ustack[0] = 0xffffffff;  // fake return PC
+  ustack[1] = argc;
+  ustack[2] = sp - (argc+1)*4;  // argv pointer
+
+  sp -= (3+argc+1) * 4;
+  if(copyout(pgdir, sp, ustack, (3+argc+1)*4) < 0)
+    goto bad;
+
+  // Save old pgdir for later cleanup of other threads
+  oldpgdir = curproc->pgdir;
+
+  // Commit to the user image.
+  curproc->pgdir = pgdir;
+  curproc->sz = sz;
+  curproc->tf->eip = elf.entry;  // main
+  curproc->tf->esp = sp;
+  switchuvm(curproc);
+
+  // Kill all other threads sharing this address space
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p != curproc && p->pgdir == oldpgdir){
+      p->killed = 1;
+      // Force context switch for these threads
+      if(p->state == SLEEPING)
+        p->state = RUNNABLE;
+    }
+  }
+  release(&ptable.lock);
+
+  // Free old page table but don't free the pages themselves
+  // as they're still in use by other threads
+  freevm(oldpgdir);
+  return 0;
+
+ bad:
+  if(pgdir)
+    freevm(pgdir);
+  if(ip){
+    iunlockput(ip);
+    end_op();
+  }
+  return -1;
 }
