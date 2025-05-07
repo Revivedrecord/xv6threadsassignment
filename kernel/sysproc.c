@@ -1,73 +1,66 @@
 #include "types.h"
-#include "x86.h"
+#include "riscv.h"
 #include "defs.h"
-#include "date.h"
 #include "param.h"
 #include "memlayout.h"
-#include "mmu.h"
+#include "spinlock.h"
 #include "proc.h"
 
-int
-sys_fork(void)
-{
-  return fork();
-}
-
-int
+uint64
 sys_exit(void)
 {
-  exit();
-  return 0; 
+  int n;
+  argint(0, &n);
+  exit(n);
+  return 0;  // not reached
 }
 
-int
-sys_wait(void)
-{
-  return wait();
-}
-
-int
-sys_kill(void)
-{
-  int pid;
-
-  if(argint(0, &pid) < 0)
-    return -1;
-  return kill(pid);
-}
-
-int
+uint64
 sys_getpid(void)
 {
   return myproc()->pid;
 }
 
-int
+uint64
+sys_fork(void)
+{
+  return fork();
+}
+
+uint64
+sys_wait(void)
+{
+  uint64 p;
+  argaddr(0, &p);
+  return wait(p);
+}
+
+uint64
 sys_sbrk(void)
 {
-  int addr;
+  uint64 addr;
   int n;
 
-  if(argint(0, &n) < 0)
-    return -1;
+  argint(0, &n);
   addr = myproc()->sz;
   if(growproc(n) < 0)
     return -1;
   return addr;
 }
 
-int
+uint64
 sys_sleep(void)
 {
   int n;
   uint ticks0;
 
-  if(argint(0, &n) < 0)
-    return -1;
+  argint(0, &n);
+  if(n < 0)
+    n = 0;
   acquire(&tickslock);
   ticks0 = ticks;
   while(ticks - ticks0 < n){
-    if(myproc()->killed){
+    if(killed(myproc())){
       release(&tickslock);
       return -1;
     }
@@ -77,7 +70,18 @@ sys_sleep(void)
   return 0;
 }
 
-int
+uint64
+sys_kill(void)
+{
+  int pid;
+
+  argint(0, &pid);
+  return kill(pid);
+}
+
+// return how many clock tick interrupts have occurred
+// since start.
+uint64
 sys_uptime(void)
 {
   uint xticks;
@@ -88,28 +92,25 @@ sys_uptime(void)
   return xticks;
 }
 
-int
+uint64
 sys_clone(void)
 {
-  void (*fcn)(void *, void *);
-  void *arg1, *arg2, *stack;
+  uint64 fcn, arg1, arg2, stack;
   
-  if(argptr(0, (void*)&fcn, sizeof(fcn)) < 0 ||
-     argptr(1, (void*)&arg1, sizeof(arg1)) < 0 ||
-     argptr(2, (void*)&arg2, sizeof(arg2)) < 0 ||
-     argptr(3, (void*)&stack, sizeof(stack)) < 0)
-    return -1;
-    
-  return clone(fcn, arg1, arg2, stack);
+  argaddr(0, &fcn);
+  argaddr(1, &arg1);
+  argaddr(2, &arg2);
+  argaddr(3, &stack);
+  
+  return clone((void(*)(void *, void *))fcn, (void*)arg1, (void*)arg2, (void*)stack);
 }
 
-int
+uint64
 sys_join(void)
 {
-  void **stack;
+  uint64 stack_ptr;
   
-  if(argptr(0, (void*)&stack, sizeof(stack)) < 0)
-    return -1;
+  argaddr(0, &stack_ptr);
   
-  return join(stack);
+  return join((void**)stack_ptr);
 }
