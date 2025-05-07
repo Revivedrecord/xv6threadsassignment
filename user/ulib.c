@@ -1,8 +1,18 @@
-#include "types.h"
-#include "stat.h"
-#include "fcntl.h"
-#include "user.h"
-#include "x86.h"
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "kernel/fcntl.h"
+#include "user/user.h"
+
+//
+// wrapper so that it's OK if main() does not call exit().
+//
+void
+start()
+{
+  extern int main();
+  main();
+  exit(0);
+}
 
 char*
 strcpy(char *s, const char *t)
@@ -36,7 +46,11 @@ strlen(const char *s)
 void*
 memset(void *dst, int c, uint n)
 {
-  stosb(dst, c, n);
+  char *cdst = (char *) dst;
+  int i;
+  for(i = 0; i < n; i++){
+    cdst[i] = c;
+  }
   return dst;
 }
 
@@ -100,77 +114,34 @@ memmove(void *vdst, const void *vsrc, int n)
 
   dst = vdst;
   src = vsrc;
-  while(n-- > 0)
-    *dst++ = *src++;
+  if (src > dst) {
+    while(n-- > 0)
+      *dst++ = *src++;
+  } else {
+    dst += n;
+    src += n;
+    while(n-- > 0)
+      *--dst = *--src;
+  }
   return vdst;
 }
 
-uint
-fetchadd(uint *addr, uint val)
-{
-  uint res;
-  
-  asm volatile("lock; xaddl %0, %1" :
-               "+r" (val), "+m" (*addr) :
-               : "memory");
-  res = val;
-  return res;
-}
-
-void
-lock_init(lock_t *lk)
-{
-  lk->ticket = 0;
-  lk->turn = 0;
-}
-
-void
-lock_acquire(lock_t *lk)
-{
-  uint myturn = fetchadd(&lk->ticket, 1);
-  
-  while(lk->turn != myturn)
-    ; // Spin
-}
-
-void
-lock_release(lock_t *lk)
-{
-  fetchadd(&lk->turn, 1);
-}
-
 int
-thread_create(void (*fn)(void *, void *), void *a1, void *a2)
+memcmp(const void *s1, const void *s2, uint n)
 {
-  void *stk = malloc(2 * PGSIZE);
-  if(!stk)
-    return -1;
-  
-  void *aligned_stk = (void*)(((uint)stk + PGSIZE - 1) & ~(PGSIZE - 1));
-  
-  int tid = clone(fn, a1, a2, aligned_stk);
-  if(tid < 0) {
-    free(stk);
-    return -1;
+  const char *p1 = s1, *p2 = s2;
+  while (n-- > 0) {
+    if (*p1 != *p2) {
+      return *p1 - *p2;
+    }
+    p1++;
+    p2++;
   }
-  
-  if(tid == 0)
-    return 0;
-  
-  return tid;
+  return 0;
 }
 
-int
-thread_join(int tid)
+void *
+memcpy(void *dst, const void *src, uint n)
 {
-  void *stk;
-  
-  int pid = join(&stk);
-  if(pid < 0)
-    return -1;
-  
-  if(stk)
-    free(stk);
-  
-  return pid;
+  return memmove(dst, src, n);
 }
