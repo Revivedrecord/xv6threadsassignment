@@ -17,7 +17,7 @@ int
 sys_exit(void)
 {
   exit();
-  return 0;  // not reached
+  return 0; 
 }
 
 int
@@ -77,8 +77,6 @@ sys_sleep(void)
   return 0;
 }
 
-// return how many clock tick interrupts have occurred
-// since start.
 int
 sys_uptime(void)
 {
